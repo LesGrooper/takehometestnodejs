@@ -1,68 +1,62 @@
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
-const { BASE_API_URL } = require('../../config');
+const pool = require('../../db');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 
-// LOGIN
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
-    if (!email || !password) {
-        return res.status(400).json({
-            error: error.response?.data || error.message
-        });
-    }
-
     try {
-        const response = await axios.post(`${BASE_API_URL}/login`, {
-            email,
-            password
-        }, {
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
+        const [rows] = await pool.query('SELECT * FROM users WHERE email = ?', [email]);
 
-        // Forward response dari external API ke Postman
-        return res.status(200).json(response.data);
+        if (rows.length === 0) {
+            return res.status(401).json({ message: 'Email tidak ditemukan' });
+        }
+
+        const user = rows[0];
+        const isMatch = await bcrypt.compare(password, user.password);
+
+        if (!isMatch) {
+            return res.status(401).json({ message: 'Password salah' });
+        }
+
+        const token = jwt.sign({ id: user.id, email: user.email }, 'SECRET_KEY', { expiresIn: '1h' });
+
+        res.json({ token });
     } catch (error) {
-        // Kirim error dari API eksternal (kalau ada)
-        return res.status(error.response?.status || 401).json({error: error.response?.data || error.message});
+        res.status(500).json({ error: error.message });
     }
 });
 
-// register
 router.post('/registration', async (req, res) => {
     const { email, password, first_name, last_name } = req.body;
 
     if (!email || !password || !first_name || !last_name) {
-        return res.status(400).json({
-            status: 104,
-            message: "Parameter input tidak lengkap",
-            data: null
-        });
+        return res.status(400).json({ message: 'Parameter input tidak lengkap' });
     }
 
     try {
-        const response = await axios.post(`${BASE_API_URL}/registration`, {
-            email,
-            password,
-            first_name,
-            last_name
-        }, {
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const conn = await pool.getConnection();
 
-        return res.status(200).json(response.data);
+        await conn.beginTransaction();
+
+        const [userResult] = await conn.query(
+            'INSERT INTO users (email, password, first_name, last_name) VALUES (?, ?, ?, ?)',
+            [email, hashedPassword, first_name, last_name]
+        );
+
+        await conn.query(
+            'INSERT INTO balances (user_id, balance) VALUES (?, 0)',
+            [userResult.insertId]
+        );
+
+        await conn.commit();
+        conn.release();
+
+        res.status(201).json({ message: 'Registrasi berhasil' });
     } catch (error) {
-        console.error('Registration error:', error.response?.data || error.message);
-
-        return res.status(error.response?.status || 400).json({
-            error: error.response?.data || error.message
-        });
+        res.status(500).json({ error: error.message });
     }
 });
-
-module.exports = router;

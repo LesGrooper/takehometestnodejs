@@ -1,71 +1,59 @@
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
-const { BASE_API_URL } = require('../../config');
+const db = require('../../db');
+const verifyToken = require('../../middlewares/authMiddleware');
 
-// transaction
-router.post('/transaction', async (req, res) => {
-    const authHeader = req.headers['authorization'];
-    const { service_code } = req.body;
-
-    if (!authHeader) {
-        return res.status(401).json({
-            error: error.response?.data || error.message,
-        });
-    }
+router.post('/transaction', verifyToken, async (req, res) => {
+    const userId = req.user.id;
+    const { service_code, amount } = req.body; // `amount` harus dikirim
 
     try {
-        const response = await axios.post(`${BASE_API_URL}/transaction`,
-            {
-                service_code
-            },
-            {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            }
+        await db.beginTransaction();
+
+        const [balanceRows] = await db.execute(
+            'SELECT balance FROM balances WHERE user_id = ?',
+            [userId]
         );
-        res.json(response.data);
+
+        if (balanceRows.length === 0 || balanceRows[0].balance < amount) {
+            await db.rollback();
+            return res.status(400).json({ message: 'Insufficient balance' });
+        }
+
+        await db.execute(
+            'INSERT INTO transactions (user_id, service_code, amount) VALUES (?, ?, ?)',
+            [userId, service_code, amount]
+        );
+
+        await db.execute(
+            'UPDATE balances SET balance = balance - ? WHERE user_id = ?',
+            [amount, userId]
+        );
+
+        await db.commit();
+
+        res.status(200).json({ message: 'Transaction successful', amount });
     } catch (error) {
-        res.status(500).json({
-            error: error.response?.data || error.message,
-        });
+        await db.rollback();
+        res.status(500).json({ message: error.message });
     }
 });
 
-// transaction/history
-router.get('/transaction/history', async (req, res) => {
-    const authHeader = req.headers['authorization'];
-    const limit = req.query['limit'];
-    const offset = req.query['offset'];
-
-    if (!authHeader) {
-        return res.status(401).json({
-            error: error.response?.data || error.message,
-        });
-    }
+// GET transaction history
+router.get('/transaction/history', verifyToken, async (req, res) => {
+    const userId = req.user.id;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = parseInt(req.query.offset) || 0;
 
     try {
-        const response = await axios.get(`${BASE_API_URL}/transaction/history`,
-            {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json',
-                    'limit'        : limit,
-                    'offset'        : offset
-                },
-                params: {
-                    limit,
-                    offset
-                }
-            }
+        const [rows] = await db.execute(
+            'SELECT * FROM transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?',
+            [userId, limit, offset]
         );
-        res.json(response.data);
+
+        res.status(200).json({ history: rows });
     } catch (error) {
-        res.status(500).json({
-            error: error.response?.data || error.message,
-        });
+        res.status(500).json({ message: error.message });
     }
 });
 

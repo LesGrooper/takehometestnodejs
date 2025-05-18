@@ -1,36 +1,43 @@
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
-const { BASE_API_URL } = require('../../config');
+const db = require('../../db');
+const verifyToken = require('../../middlewares/authMiddleware');
 
-// topup
-router.post('/topup', async (req, res) => {
-    const authHeader = req.headers['authorization'];
+router.post('/topup', verifyToken, async (req, res) => {
+    const userId = req.user.id;
     const { top_up_amount } = req.body;
 
-    if (!authHeader) {
-        return res.status(401).json({
-            error: error.response?.data || error.message,
-        });
-    }
-
     try {
-        const response = await axios.post(`${BASE_API_URL}/topup`,
-            {
-                top_up_amount
-            },
-            {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            }
+        await db.beginTransaction();
+
+        await db.execute(
+            'INSERT INTO topups (user_id, amount) VALUES (?, ?)',
+            [userId, top_up_amount]
         );
-        res.json(response.data);
+
+        const [existing] = await db.execute(
+            'SELECT * FROM balances WHERE user_id = ?',
+            [userId]
+        );
+
+        if (existing.length > 0) {
+            await db.execute(
+                'UPDATE balances SET balance = balance + ? WHERE user_id = ?',
+                [top_up_amount, userId]
+            );
+        } else {
+            await db.execute(
+                'INSERT INTO balances (user_id, balance) VALUES (?, ?)',
+                [userId, top_up_amount]
+            );
+        }
+
+        await db.commit();
+
+        res.status(200).json({ message: 'Top up successful', top_up_amount });
     } catch (error) {
-        res.status(500).json({
-            error: error.response?.data || error.message,
-        });
+        await db.rollback();
+        res.status(500).json({ message: error.message });
     }
 });
 
