@@ -6,66 +6,58 @@ const FormData = require('form-data');
 const fs = require('fs');
 const path = require('path');
 const { BASE_API_URL } = require('../../config');
+const authenticate = require('../../middleware/authenticate');
+const multer = require('multer');
+const upload = multer({ storage, fileFilter });
 
-// get profile
-router.get('/profile', async (req, res) => {
-    const authHeader = req.headers['authorization'];
 
-    if (!authHeader) {
-        return res.status(401).json({
-            error: error.response?.data || error.message,
-        });
-    }
+router.put('/profile/image', authenticate, upload.single('file'), async (req, res) => {
+  const file = req.file;
 
-    try {
-        const response = await axios.get(`${BASE_API_URL}/profile`, {
-            headers: {
-                'Authorization': authHeader,
-                'Content-Type': 'application/json'
-            }
-        });
+  if (!file) {
+    return res.status(400).json({ message: 'File tidak ditemukan' });
+  }
 
-        return res.status(200).json(response.data);
-    } catch (error) {
-        console.error('Profile error:', error.response?.data || error.message);
+  try {
+    await pool.query(
+      'UPDATE users SET profile_image = ? WHERE id = ?',
+      [file.buffer.toString('base64'), req.user.id]
+    );
 
-        return res.status(error.response?.status || 400).json({
-            error: error.response?.data || error.message
-        });
-    }
+    res.json({ message: 'Foto profil berhasil diperbarui' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// update
-router.put('/profile/update', async (req, res) => {
-    const authHeader = req.headers['authorization'];
+router.get('/profile', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, email, first_name, last_name, profile_image FROM users WHERE id = ?',
+      [req.user.id]
+    );
+
+    res.json(rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put('/profile/update', authenticate, async (req, res) => {
     const { first_name, last_name } = req.body;
-
-    if (!authHeader) {
-        return res.status(401).json({
-            error: error.response?.data || error.message,
-        });
-    }
-
+  
     try {
-        const response = await axios.put(`${BASE_API_URL}/profile/update`, {
-            first_name,
-            last_name
-        }, {
-            headers: {
-                'Authorization': authHeader,
-                'Content-Type': 'application/json'
-            }
-        });
-
-        return res.status(200).json(response.data);
+      await pool.query(
+        'UPDATE users SET first_name = ?, last_name = ? WHERE id = ?',
+        [first_name, last_name, req.user.id]
+      );
+  
+      res.json({ message: 'Profil berhasil diperbarui' });
     } catch (error) {
-        console.error('Profile error:', error.response?.data || error.message);
-
-        return res.status(error.response?.status || 400).json({
-            error: error.response?.data || error.message
-        });
+      res.status(500).json({ error: error.message });
     }
-});
+  });
+  
 
 
 const storage = multer.memoryStorage();
