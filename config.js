@@ -1,3 +1,5 @@
+// config.js
 module.exports = {
-    BASE_API_URL : 'https://take-home-test-api.nutech-integrasi.com'
-};
+    BASE_API_URL: process.env.BASE_API_URL
+  };
+  
